@@ -1,0 +1,39 @@
+@startuml
+actor Operator
+participant "MES Frontend" as Frontend
+participant "MES API" as API
+participant "Redis Cache" as Cache
+database "MES DB" as DB
+participant "RabbitMQ" as Queue
+
+Operator -> Frontend: Изменяет статус заказа\n(order_id=123, new_status=MANUFACTURING_STARTED)
+Frontend -> API: PUT /api/orders/123/status\n{status: "MANUFACTURING_STARTED"}
+
+API -> DB: UPDATE orders SET status = 'MANUFACTURING_STARTED'\nWHERE id = 123\n(old_status=MANUFACTURING_APPROVED)
+DB -> API: Успешное обновление\n+ данные заказа
+
+API -> API: Обновление кеша:\n- Удалить order:123 (детали заказа)\n- Обновить списки для затронутых статусов
+
+API -> Cache: DEL order:123
+
+note over API,Cache: Обновляем списки вместо удаления\n(оптимизация: сохраняем кеш)
+
+API -> API: Определить позицию заказа\nв списке нового статуса\n(сортировка по created_at DESC)
+
+alt Известна страница в старом статусе
+    API -> Cache: LREM orders:status:MANUFACTURING_APPROVED:page:X\n(удалить заказ из списка старого статуса)
+else Страница неизвестна
+    API -> Cache: DEL orders:status:MANUFACTURING_APPROVED:page:*\n(удалить все страницы старого статуса)
+end
+
+API -> Cache: LPUSH orders:status:MANUFACTURING_STARTED:page:1\n(добавить заказ в начало списка нового статуса)
+
+note right: Заказ добавляется на первую страницу\n(новые заказы обычно там)\nОстальные страницы удаляются при необходимости
+
+API -> Queue: Публикует событие изменения статуса
+Queue -> Queue: Отправляет сообщение в CRM
+
+API -> Frontend: Успешное обновление
+Frontend -> Operator: Статус обновлён
+@enduml
+
