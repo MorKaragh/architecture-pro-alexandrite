@@ -1,0 +1,27 @@
+@startuml
+actor Operator
+participant "MES Frontend" as Frontend
+participant "MES API" as API
+participant "Redis Cache" as Cache
+database "MES DB" as DB
+
+Operator -> Frontend: Запрос списка заказов\n(статус=MANUFACTURING_STARTED, page=1)
+Frontend -> API: GET /api/orders?status=MANUFACTURING_STARTED&page=1
+
+API -> API: Формирует ключ кеша:\norders:status:MANUFACTURING_STARTED:page:1:limit:20
+API -> Cache: GET orders:status:MANUFACTURING_STARTED:page:1:limit:20
+
+alt Кеш найден (cache hit)
+    Cache -> API: Возвращает данные из кеша
+    API -> Frontend: Возвращает список заказов
+    Frontend -> Operator: Отображает заказы
+else Кеш не найден (cache miss)
+    Cache -> API: null
+    API -> DB: SELECT * FROM orders WHERE status = 'MANUFACTURING_STARTED'\nORDER BY created_at DESC LIMIT 20 OFFSET 0
+    DB -> API: Возвращает данные из БД
+    API -> Cache: SET orders:status:MANUFACTURING_STARTED:page:1:limit:20\n(с TTL, например 60 секунд)
+    API -> Frontend: Возвращает список заказов
+    Frontend -> Operator: Отображает заказы
+end
+@enduml
+
